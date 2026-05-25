@@ -26,7 +26,7 @@ public sealed class UnitySerializedAssetTextExporter : EditorWindow
         settings.EnsureDefaults();
 
         List<SerializedAssetFileEntry> files = CollectAssetFiles(settings)
-            .Where(x => !ScriptsExporterForAIUtility.ShouldExclude(x.FullPath, settings.excludedPathKeywords))
+            .Where(x => !ScriptsExporterForAIUtility.ShouldExclude(x.DisplayPath, settings.excludedPathKeywords))
             .Where(x => ScriptsExporterForAIUtility.IsAllowedExtension(x.FullPath, settings.serializedAssetExtensions))
             .OrderBy(x => x.DisplayPath)
             .ToList();
@@ -99,11 +99,12 @@ public sealed class UnitySerializedAssetTextExporter : EditorWindow
         foreach (string path in Directory.GetFiles(root, "*.*", SearchOption.AllDirectories))
         {
             string normalized = ScriptsExporterForAIUtility.NormalizePath(path);
+            string displayPath = "Assets" + normalized.Replace(root, string.Empty);
 
             yield return new SerializedAssetFileEntry
             {
                 FullPath = normalized,
-                DisplayPath = "Assets" + normalized.Replace(root, string.Empty)
+                DisplayPath = displayPath
             };
         }
 
@@ -114,11 +115,12 @@ public sealed class UnitySerializedAssetTextExporter : EditorWindow
             foreach (string path in Directory.GetFiles(packageRoot, "*.*", SearchOption.AllDirectories))
             {
                 string normalized = ScriptsExporterForAIUtility.NormalizePath(path);
+                string displayPath = $"Packages/{packageInfo.name}" + normalized.Replace(packageRoot, string.Empty);
 
                 yield return new SerializedAssetFileEntry
                 {
                     FullPath = normalized,
-                    DisplayPath = $"Packages/{packageInfo.name}" + normalized.Replace(packageRoot, string.Empty)
+                    DisplayPath = displayPath
                 };
             }
         }
