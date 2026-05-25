@@ -1,79 +1,51 @@
-using UnityEngine;
-using UnityEditor;
-using UnityEditor.PackageManager;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
-using System.Diagnostics;
-using System.Collections.Generic;
+using UnityEditor;
+using UnityEditor.PackageManager;
+using UnityEngine;
 
-public class UnitySerializedAssetTextExporter : EditorWindow
+public sealed class UnitySerializedAssetTextExporter : EditorWindow
 {
-    private static readonly string[] ExcludedPathKeywords =
-    {
-        "/Spine/",
-        "/External/",
-        "/Samples~/",
-        "/Documentation~/",
-        "/Library/",
-        "/Temp/",
-        "/Obj/",
-        "/Logs/",
-        "/UserSettings/",
-    };
-
-    private static readonly string[] IncludedPackageNames =
-    {
-        "com.shared.command-framework",
-        "com.more.core",
-    };
-
-    private static readonly string[] IncludedExtensions =
-    {
-        ".unity",
-        ".prefab",
-        ".asset",
-        ".mat",
-        ".controller",
-        ".overrideController",
-        ".playable",
-        ".anim",
-        ".inputactions",
-    };
-
-    private const int MaxFileCharCount = 300_000;
-
-    [MenuItem("Tools/Export Unity Serialized Assets to TXT")]
+    [MenuItem("Tools/Scripts Exporter For AI/Export Unity Serialized Assets to TXT")]
     public static void Export()
     {
         string outputPath = EditorUtility.SaveFilePanel(
             "Save Unity Serialized Assets as TXT",
-            "",
+            string.Empty,
             "Project_UnitySerializedAssets_Combined",
             "txt");
 
         if (string.IsNullOrEmpty(outputPath))
             return;
 
-        List<SerializedAssetFileEntry> files = new();
+        ScriptsExporterForAISettings settings = ScriptsExporterForAISettings.instance;
+        settings.EnsureDefaults();
 
-        CollectAssetFiles(files);
-        CollectIncludedPackageFiles(files);
-
-        files = files
-            .Where(x => !ShouldExclude(x.FullPath))
-            .Where(x => IncludedExtensions.Contains(Path.GetExtension(x.FullPath), StringComparer.OrdinalIgnoreCase))
+        List<SerializedAssetFileEntry> files = CollectAssetFiles(settings)
+            .Where(x => !ScriptsExporterForAIUtility.ShouldExclude(x.FullPath, settings.excludedPathKeywords))
+            .Where(x => ScriptsExporterForAIUtility.IsAllowedExtension(x.FullPath, settings.serializedAssetExtensions))
             .OrderBy(x => x.DisplayPath)
             .ToList();
 
-        StringBuilder sb = new();
+        StringBuilder sb = new StringBuilder();
 
-        AppendHeader(sb, files.Count);
+        ScriptsExporterForAIUtility.AppendCommonHeader(sb, "Unity Serialized Assets Snapshot", settings, files.Count);
+        sb.AppendLine("IMPORTANT:");
+        sb.AppendLine("• This exporter does NOT open scenes.");
+        sb.AppendLine("• This exporter does NOT load prefab contents.");
+        sb.AppendLine("• This exporter reads .unity/.prefab/.asset/etc as raw serialized text.");
+        sb.AppendLine("• Works best when Unity Project Settings > Editor > Asset Serialization Mode is Force Text.");
+        sb.AppendLine("• Binary assets are skipped.");
+        sb.AppendLine(ScriptsExporterForAIUtility.Separator);
+        sb.AppendLine();
 
         int exportedCount = 0;
         int skippedBinaryCount = 0;
         int trimmedCount = 0;
+        int errorCount = 0;
 
         foreach (SerializedAssetFileEntry file in files)
         {
@@ -84,153 +56,130 @@ public class UnitySerializedAssetTextExporter : EditorWindow
 
                 byte[] bytes = File.ReadAllBytes(file.FullPath);
 
-                if (LooksBinary(bytes))
+                if (ScriptsExporterForAIUtility.LooksBinary(bytes))
                 {
-                    AppendSkippedBinary(sb, file);
+                    AppendSkippedBinary(sb, file, settings);
                     skippedBinaryCount++;
                     continue;
                 }
 
                 string text = Encoding.UTF8.GetString(bytes);
+                bool trimmed;
+                text = ScriptsExporterForAIUtility.TrimTextIfNeeded(text, settings.maxFileCharCount, out trimmed);
 
-                bool trimmed = false;
-                if (text.Length > MaxFileCharCount)
-                {
-                    text = text.Substring(0, MaxFileCharCount)
-                           + "\n\n<TRIMMED: file exceeded MaxFileCharCount>";
-                    trimmed = true;
-                    trimmedCount++;
-                }
-
-                AppendFile(sb, file, text, trimmed);
+                AppendFile(sb, file, text, trimmed, settings);
                 exportedCount++;
+
+                if (trimmed)
+                    trimmedCount++;
             }
             catch (Exception e)
             {
-                AppendError(sb, file, e);
+                AppendError(sb, file, e, settings);
+                errorCount++;
             }
         }
 
-        AppendSummary(sb, exportedCount, skippedBinaryCount, trimmedCount);
+        AppendSummary(sb, exportedCount, skippedBinaryCount, trimmedCount, errorCount);
 
         File.WriteAllText(outputPath, sb.ToString(), Encoding.UTF8);
         AssetDatabase.Refresh();
 
         EditorUtility.DisplayDialog(
             "Export Complete",
-            $"Exported: {exportedCount}\nSkipped Binary: {skippedBinaryCount}\nTrimmed: {trimmedCount}\n\n{outputPath}",
+            $"Exported: {exportedCount}\nSkipped Binary: {skippedBinaryCount}\nTrimmed: {trimmedCount}\nErrors: {errorCount}\n\n{outputPath}",
             "OK");
     }
 
-    private static void CollectAssetFiles(List<SerializedAssetFileEntry> files)
+    private static IEnumerable<SerializedAssetFileEntry> CollectAssetFiles(ScriptsExporterForAISettings settings)
     {
-        string root = Application.dataPath.Replace('\\', '/');
+        string root = ScriptsExporterForAIUtility.NormalizePath(Application.dataPath);
 
         foreach (string path in Directory.GetFiles(root, "*.*", SearchOption.AllDirectories))
         {
-            string normalized = path.Replace('\\', '/');
+            string normalized = ScriptsExporterForAIUtility.NormalizePath(path);
 
-            files.Add(new SerializedAssetFileEntry
+            yield return new SerializedAssetFileEntry
             {
                 FullPath = normalized,
-                DisplayPath = "Assets" + normalized.Replace(root, "")
-            });
+                DisplayPath = "Assets" + normalized.Replace(root, string.Empty)
+            };
         }
-    }
 
-    private static void CollectIncludedPackageFiles(List<SerializedAssetFileEntry> files)
-    {
-        foreach (UnityEditor.PackageManager.PackageInfo packageInfo in UnityEditor.PackageManager.PackageInfo.GetAllRegisteredPackages())
+        foreach (PackageInfo packageInfo in ScriptsExporterForAIUtility.GetIncludedPackages(settings.includedPackageNames))
         {
-            if (!IncludedPackageNames.Contains(packageInfo.name))
-                continue;
-
-            if (string.IsNullOrEmpty(packageInfo.resolvedPath))
-                continue;
-
-            if (!Directory.Exists(packageInfo.resolvedPath))
-                continue;
-
-            string packageRoot = packageInfo.resolvedPath.Replace('\\', '/');
+            string packageRoot = ScriptsExporterForAIUtility.NormalizePath(packageInfo.resolvedPath);
 
             foreach (string path in Directory.GetFiles(packageRoot, "*.*", SearchOption.AllDirectories))
             {
-                string normalized = path.Replace('\\', '/');
+                string normalized = ScriptsExporterForAIUtility.NormalizePath(path);
 
-                files.Add(new SerializedAssetFileEntry
+                yield return new SerializedAssetFileEntry
                 {
                     FullPath = normalized,
-                    DisplayPath = $"Packages/{packageInfo.name}" + normalized.Replace(packageRoot, "")
-                });
+                    DisplayPath = $"Packages/{packageInfo.name}" + normalized.Replace(packageRoot, string.Empty)
+                };
             }
         }
-    }
-
-    private static void AppendHeader(StringBuilder sb, int candidateCount)
-    {
-        sb.AppendLine("==============================================================================");
-        sb.AppendLine("PROJECT: Hemi-Sphere");
-        sb.AppendLine("EXPORT_KIND: Unity Serialized Assets Snapshot");
-        sb.AppendLine($"GENERATED_AT: {DateTime.Now:yyyy-MM-dd HH:mm} KST");
-        sb.AppendLine($"UNITY_VERSION: {Application.unityVersion}");
-        sb.AppendLine($"GIT_COMMIT: {GetGitCommitShortHash()}");
-        sb.AppendLine($"CANDIDATE_FILE_COUNT: {candidateCount}");
-        sb.AppendLine("==============================================================================");
-        sb.AppendLine("IMPORTANT:");
-        sb.AppendLine("• This exporter does NOT open scenes.");
-        sb.AppendLine("• This exporter does NOT load prefab contents.");
-        sb.AppendLine("• This exporter reads .unity/.prefab/.asset/etc as raw serialized text.");
-        sb.AppendLine("• Works best when Unity Project Settings > Editor > Asset Serialization Mode is Force Text.");
-        sb.AppendLine("• Binary assets are skipped.");
-        sb.AppendLine("==============================================================================");
-        sb.AppendLine();
     }
 
     private static void AppendFile(
         StringBuilder sb,
         SerializedAssetFileEntry file,
         string text,
-        bool trimmed)
+        bool trimmed,
+        ScriptsExporterForAISettings settings)
     {
         string extension = Path.GetExtension(file.FullPath);
 
-        sb.AppendLine("==============================================================================");
+        sb.AppendLine(ScriptsExporterForAIUtility.Separator);
         sb.AppendLine($"FILE: {Path.GetFileName(file.FullPath)}");
         sb.AppendLine($"PATH: {file.DisplayPath}");
         sb.AppendLine($"EXTENSION: {extension}");
-        sb.AppendLine($"FULL_PATH: {file.FullPath}");
+
+        if (settings.includeFullPath)
+            sb.AppendLine($"FULL_PATH: {file.FullPath}");
+
         sb.AppendLine($"TRIMMED: {trimmed}");
-        sb.AppendLine("==============================================================================");
+        sb.AppendLine(ScriptsExporterForAIUtility.Separator);
 
-        string[] lines = text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
-
-        for (int i = 0; i < lines.Length; i++)
-        {
-            sb.AppendLine($"{(i + 1).ToString("D4")}: {lines[i]}");
-        }
+        ScriptsExporterForAIUtility.AppendLineNumberedText(sb, text, settings.includeLineNumbers);
 
         sb.AppendLine();
         sb.AppendLine();
     }
 
-    private static void AppendSkippedBinary(StringBuilder sb, SerializedAssetFileEntry file)
+    private static void AppendSkippedBinary(
+        StringBuilder sb,
+        SerializedAssetFileEntry file,
+        ScriptsExporterForAISettings settings)
     {
-        sb.AppendLine("==============================================================================");
+        sb.AppendLine(ScriptsExporterForAIUtility.Separator);
         sb.AppendLine($"SKIPPED_BINARY_FILE: {Path.GetFileName(file.FullPath)}");
         sb.AppendLine($"PATH: {file.DisplayPath}");
-        sb.AppendLine($"FULL_PATH: {file.FullPath}");
-        sb.AppendLine("==============================================================================");
+
+        if (settings.includeFullPath)
+            sb.AppendLine($"FULL_PATH: {file.FullPath}");
+
+        sb.AppendLine(ScriptsExporterForAIUtility.Separator);
         sb.AppendLine();
     }
 
-    private static void AppendError(StringBuilder sb, SerializedAssetFileEntry file, Exception e)
+    private static void AppendError(
+        StringBuilder sb,
+        SerializedAssetFileEntry file,
+        Exception e,
+        ScriptsExporterForAISettings settings)
     {
-        sb.AppendLine("==============================================================================");
+        sb.AppendLine(ScriptsExporterForAIUtility.Separator);
         sb.AppendLine($"EXPORT_ERROR: {Path.GetFileName(file.FullPath)}");
         sb.AppendLine($"PATH: {file.DisplayPath}");
-        sb.AppendLine($"FULL_PATH: {file.FullPath}");
+
+        if (settings.includeFullPath)
+            sb.AppendLine($"FULL_PATH: {file.FullPath}");
+
         sb.AppendLine(e.ToString());
-        sb.AppendLine("==============================================================================");
+        sb.AppendLine(ScriptsExporterForAIUtility.Separator);
         sb.AppendLine();
     }
 
@@ -238,70 +187,16 @@ public class UnitySerializedAssetTextExporter : EditorWindow
         StringBuilder sb,
         int exportedCount,
         int skippedBinaryCount,
-        int trimmedCount)
+        int trimmedCount,
+        int errorCount)
     {
-        sb.AppendLine("==============================================================================");
+        sb.AppendLine(ScriptsExporterForAIUtility.Separator);
         sb.AppendLine("SUMMARY");
         sb.AppendLine($"EXPORTED_COUNT: {exportedCount}");
         sb.AppendLine($"SKIPPED_BINARY_COUNT: {skippedBinaryCount}");
         sb.AppendLine($"TRIMMED_COUNT: {trimmedCount}");
-        sb.AppendLine("==============================================================================");
-    }
-
-    private static bool ShouldExclude(string path)
-    {
-        string normalized = path.Replace('\\', '/');
-        return ExcludedPathKeywords.Any(excluded => normalized.Contains(excluded));
-    }
-
-    private static bool LooksBinary(byte[] bytes)
-    {
-        if (bytes == null || bytes.Length == 0)
-            return false;
-
-        int checkLength = Math.Min(bytes.Length, 8000);
-
-        for (int i = 0; i < checkLength; i++)
-        {
-            byte b = bytes[i];
-
-            if (b == 0)
-                return true;
-        }
-
-        return false;
-    }
-
-    private static string GetGitCommitShortHash()
-    {
-        try
-        {
-            string projectRoot = Directory.GetParent(Application.dataPath)?.FullName ?? Application.dataPath;
-
-            ProcessStartInfo psi = new()
-            {
-                FileName = "git",
-                Arguments = "rev-parse --short HEAD",
-                WorkingDirectory = projectRoot,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-
-            using Process process = Process.Start(psi);
-            if (process == null)
-                return "UNKNOWN";
-
-            string output = process.StandardOutput.ReadToEnd().Trim();
-            process.WaitForExit(2000);
-
-            return string.IsNullOrEmpty(output) ? "UNKNOWN" : output;
-        }
-        catch
-        {
-            return "UNKNOWN";
-        }
+        sb.AppendLine($"ERROR_COUNT: {errorCount}");
+        sb.AppendLine(ScriptsExporterForAIUtility.Separator);
     }
 
     private sealed class SerializedAssetFileEntry

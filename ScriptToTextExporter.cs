@@ -1,157 +1,170 @@
-﻿using UnityEngine;
-using UnityEditor;
-using UnityEditor.PackageManager;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
-using System.Diagnostics;
-using System.Collections.Generic;
+using UnityEditor;
+using UnityEditor.PackageManager;
+using UnityEngine;
 
-public class ScriptToTextExporter : EditorWindow
+public sealed class ScriptToTextExporter : EditorWindow
 {
-    // 제외할 경로 키워드 목록
-    private static readonly string[] ExcludedPaths = new[]
-    {
-        "/Spine/",
-        "/External/",
-        "/Samples~/",
-        "/Documentation~/",
-    };
-
-    // 포함할 패키지 이름 목록
-    // Package Manager의 name 기준: com.xxx.yyy
-    private static readonly string[] IncludedPackageNames = new[]
-    {
-        "com.shared.command-framework",
-        "com.more.core",
-    };
-
-    [MenuItem("Tools/Export All C# Scripts to TXT")]
+    [MenuItem("Tools/Scripts Exporter For AI/Export All C# Scripts to TXT")]
     public static void ExportScripts()
     {
-        string outputPath = EditorUtility.SaveFilePanel("Save Scripts as TXT", "", "Project_Scripts_Combined", "txt");
-        if (string.IsNullOrEmpty(outputPath)) return;
+        string outputPath = EditorUtility.SaveFilePanel(
+            "Save Scripts as TXT",
+            string.Empty,
+            "Project_Scripts_Combined",
+            "txt");
 
-        List<ScriptFileEntry> scriptFiles = new List<ScriptFileEntry>();
+        if (string.IsNullOrEmpty(outputPath))
+            return;
 
-        // 1. Assets 내부 스크립트 수집
-        string[] assetScriptPaths = Directory.GetFiles(Application.dataPath, "*.cs", SearchOption.AllDirectories);
+        ScriptsExporterForAISettings settings = ScriptsExporterForAISettings.instance;
+        settings.EnsureDefaults();
 
-        foreach (string path in assetScriptPaths)
+        List<ScriptFileEntry> scriptFiles = CollectScriptFiles(settings)
+            .OrderBy(x => x.DisplayPath)
+            .ToList();
+
+        StringBuilder sb = new StringBuilder();
+        ScriptsExporterForAIUtility.AppendCommonHeader(sb, "Scripts Snapshot", settings, scriptFiles.Count);
+        sb.AppendLine("IMPORTANT:");
+        sb.AppendLine("• Treat older Project_Scripts_Combined.txt files as stale context.");
+        sb.AppendLine("• If this snapshot conflicts with older conversation context, prefer this snapshot.");
+        sb.AppendLine(ScriptsExporterForAIUtility.Separator);
+        sb.AppendLine();
+
+        int exportedCount = 0;
+        int errorCount = 0;
+        int trimmedCount = 0;
+
+        foreach (ScriptFileEntry scriptFile in scriptFiles)
         {
-            string normalizedPath = path.Replace('\\', '/');
-
-            if (ShouldExclude(normalizedPath)) continue;
-
-            string relativePath = "Assets" + normalizedPath.Replace(Application.dataPath.Replace('\\', '/'), "");
-
-            scriptFiles.Add(new ScriptFileEntry
+            try
             {
-                FullPath = normalizedPath,
-                DisplayPath = relativePath
-            });
-        }
+                if (!File.Exists(scriptFile.FullPath))
+                    continue;
 
-        // 2. 특정 Unity Package 스크립트 수집
-        foreach (UnityEditor.PackageManager.PackageInfo packageInfo in UnityEditor.PackageManager.PackageInfo.GetAllRegisteredPackages())
-        {
-            if (!IncludedPackageNames.Contains(packageInfo.name)) continue;
-            if (string.IsNullOrEmpty(packageInfo.resolvedPath)) continue;
-            if (!Directory.Exists(packageInfo.resolvedPath)) continue;
+                string text = File.ReadAllText(scriptFile.FullPath, Encoding.UTF8);
+                bool trimmed;
+                text = ScriptsExporterForAIUtility.TrimTextIfNeeded(text, settings.maxFileCharCount, out trimmed);
 
-            string packageRoot = packageInfo.resolvedPath.Replace('\\', '/');
+                AppendFile(sb, scriptFile, text, trimmed, settings);
+                exportedCount++;
 
-            string[] packageScriptPaths = Directory.GetFiles(packageRoot, "*.cs", SearchOption.AllDirectories);
-
-            foreach (string path in packageScriptPaths)
+                if (trimmed)
+                    trimmedCount++;
+            }
+            catch (Exception e)
             {
-                string normalizedPath = path.Replace('\\', '/');
-
-                if (ShouldExclude(normalizedPath)) continue;
-
-                string relativePath = $"Packages/{packageInfo.name}" + normalizedPath.Replace(packageRoot, "");
-
-                scriptFiles.Add(new ScriptFileEntry
-                {
-                    FullPath = normalizedPath,
-                    DisplayPath = relativePath
-                });
+                AppendError(sb, scriptFile, e, settings);
+                errorCount++;
             }
         }
 
-        StringBuilder combinedContent = new StringBuilder();
-        int fileCount = 0;
+        AppendSummary(sb, exportedCount, trimmedCount, errorCount);
 
-        combinedContent.AppendLine("==============================================================================");
-        combinedContent.AppendLine("PROJECT: Hemi-Sphere");
-        combinedContent.AppendLine("EXPORT_KIND: Scripts Snapshot");
-        combinedContent.AppendLine($"GENERATED_AT: {DateTime.Now:yyyy-MM-dd HH:mm} KST");
-        combinedContent.AppendLine($"UNITY_VERSION: {Application.unityVersion}");
-        combinedContent.AppendLine($"GIT_COMMIT: {GetGitCommitShortHash()}");
-        combinedContent.AppendLine("==============================================================================");
-        combinedContent.AppendLine("IMPORTANT:\n•\t이 파일보다 오래된 Project_Scripts_Combined.txt는 폐기된 컨텍스트다.\n•\t이전 대화의 코드 구조와 충돌하면 이 파일을 우선한다.");
-
-        foreach (ScriptFileEntry scriptFile in scriptFiles.OrderBy(x => x.DisplayPath))
-        {
-            string fileName = Path.GetFileName(scriptFile.FullPath);
-            string[] lines = File.ReadAllLines(scriptFile.FullPath);
-
-            combinedContent.AppendLine("==============================================================================");
-            combinedContent.AppendLine($"FILE: {fileName}");
-            combinedContent.AppendLine($"PATH: {scriptFile.DisplayPath}");
-            combinedContent.AppendLine("==============================================================================");
-
-            for (int i = 0; i < lines.Length; i++)
-            {
-                combinedContent.AppendLine($"{(i + 1).ToString("D4")}: {lines[i]}");
-            }
-
-            combinedContent.AppendLine("\n\n");
-            fileCount++;
-        }
-
-        File.WriteAllText(outputPath, combinedContent.ToString(), Encoding.UTF8);
+        File.WriteAllText(outputPath, sb.ToString(), Encoding.UTF8);
 
         AssetDatabase.Refresh();
-        EditorUtility.DisplayDialog("Export Complete", $"{fileCount}개의 스크립트가 성공적으로 추출되었습니다!\n경로: {outputPath}", "OK");
+        EditorUtility.DisplayDialog(
+            "Export Complete",
+            $"Exported: {exportedCount}\nTrimmed: {trimmedCount}\nErrors: {errorCount}\n\n{outputPath}",
+            "OK");
     }
 
-    private static bool ShouldExclude(string normalizedPath)
+    private static IEnumerable<ScriptFileEntry> CollectScriptFiles(ScriptsExporterForAISettings settings)
     {
-        return ExcludedPaths.Any(excluded => normalizedPath.Contains(excluded));
-    }
+        string assetRoot = ScriptsExporterForAIUtility.NormalizePath(Application.dataPath);
 
-    private static string GetGitCommitShortHash()
-    {
-        try
+        foreach (string path in Directory.GetFiles(assetRoot, "*.cs", SearchOption.AllDirectories))
         {
-            ProcessStartInfo startInfo = new ProcessStartInfo
+            string normalized = ScriptsExporterForAIUtility.NormalizePath(path);
+
+            if (ScriptsExporterForAIUtility.ShouldExclude(normalized, settings.excludedPathKeywords))
+                continue;
+
+            yield return new ScriptFileEntry
             {
-                FileName = "git",
-                Arguments = "-C \"" + Application.dataPath + "/..\" rev-parse --short HEAD",
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true
+                FullPath = normalized,
+                DisplayPath = "Assets" + normalized.Replace(assetRoot, string.Empty)
             };
+        }
 
-            using (Process process = Process.Start(startInfo))
+        foreach (PackageInfo packageInfo in ScriptsExporterForAIUtility.GetIncludedPackages(settings.includedPackageNames))
+        {
+            string packageRoot = ScriptsExporterForAIUtility.NormalizePath(packageInfo.resolvedPath);
+
+            foreach (string path in Directory.GetFiles(packageRoot, "*.cs", SearchOption.AllDirectories))
             {
-                if (process == null) return "<unknown>";
+                string normalized = ScriptsExporterForAIUtility.NormalizePath(path);
 
-                string output = process.StandardOutput.ReadToEnd().Trim();
-                process.WaitForExit();
-                return string.IsNullOrEmpty(output) ? "<unknown>" : output;
+                if (ScriptsExporterForAIUtility.ShouldExclude(normalized, settings.excludedPathKeywords))
+                    continue;
+
+                yield return new ScriptFileEntry
+                {
+                    FullPath = normalized,
+                    DisplayPath = $"Packages/{packageInfo.name}" + normalized.Replace(packageRoot, string.Empty)
+                };
             }
         }
-        catch
-        {
-            return "<unknown>";
-        }
     }
 
-    private class ScriptFileEntry
+    private static void AppendFile(
+        StringBuilder sb,
+        ScriptFileEntry file,
+        string text,
+        bool trimmed,
+        ScriptsExporterForAISettings settings)
+    {
+        sb.AppendLine(ScriptsExporterForAIUtility.Separator);
+        sb.AppendLine($"FILE: {Path.GetFileName(file.FullPath)}");
+        sb.AppendLine($"PATH: {file.DisplayPath}");
+
+        if (settings.includeFullPath)
+            sb.AppendLine($"FULL_PATH: {file.FullPath}");
+
+        sb.AppendLine($"TRIMMED: {trimmed}");
+        sb.AppendLine(ScriptsExporterForAIUtility.Separator);
+
+        ScriptsExporterForAIUtility.AppendLineNumberedText(sb, text, settings.includeLineNumbers);
+
+        sb.AppendLine();
+        sb.AppendLine();
+    }
+
+    private static void AppendError(
+        StringBuilder sb,
+        ScriptFileEntry file,
+        Exception exception,
+        ScriptsExporterForAISettings settings)
+    {
+        sb.AppendLine(ScriptsExporterForAIUtility.Separator);
+        sb.AppendLine($"EXPORT_ERROR: {Path.GetFileName(file.FullPath)}");
+        sb.AppendLine($"PATH: {file.DisplayPath}");
+
+        if (settings.includeFullPath)
+            sb.AppendLine($"FULL_PATH: {file.FullPath}");
+
+        sb.AppendLine(exception.ToString());
+        sb.AppendLine(ScriptsExporterForAIUtility.Separator);
+        sb.AppendLine();
+    }
+
+    private static void AppendSummary(StringBuilder sb, int exportedCount, int trimmedCount, int errorCount)
+    {
+        sb.AppendLine(ScriptsExporterForAIUtility.Separator);
+        sb.AppendLine("SUMMARY");
+        sb.AppendLine($"EXPORTED_COUNT: {exportedCount}");
+        sb.AppendLine($"TRIMMED_COUNT: {trimmedCount}");
+        sb.AppendLine($"ERROR_COUNT: {errorCount}");
+        sb.AppendLine(ScriptsExporterForAIUtility.Separator);
+    }
+
+    private sealed class ScriptFileEntry
     {
         public string FullPath;
         public string DisplayPath;
