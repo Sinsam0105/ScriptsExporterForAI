@@ -6,13 +6,5 @@
   "unity": "2021.3",
   "author": {
     "name": "Sinsam"
-  },
-  "keywords": [
-    "exporter",
-    "editor",
-    "ai",
-    "scripts",
-    "serialized-assets"
-  ],
-  "type": "tool"
+  }
 }
