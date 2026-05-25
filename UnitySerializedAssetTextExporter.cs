@@ -6,6 +6,7 @@ using System.Text;
 using UnityEditor;
 using UnityEditor.PackageManager;
 using UnityEngine;
+using PackageInfo = UnityEditor.PackageManager.PackageInfo;
 
 public sealed class UnitySerializedAssetTextExporter : EditorWindow
 {
@@ -34,11 +35,11 @@ public sealed class UnitySerializedAssetTextExporter : EditorWindow
 
         ScriptsExporterForAIUtility.AppendCommonHeader(sb, "Unity Serialized Assets Snapshot", settings, files.Count);
         sb.AppendLine("IMPORTANT:");
-        sb.AppendLine("• This exporter does NOT open scenes.");
-        sb.AppendLine("• This exporter does NOT load prefab contents.");
-        sb.AppendLine("• This exporter reads .unity/.prefab/.asset/etc as raw serialized text.");
-        sb.AppendLine("• Works best when Unity Project Settings > Editor > Asset Serialization Mode is Force Text.");
-        sb.AppendLine("• Binary assets are skipped.");
+        sb.AppendLine("This exporter does NOT open scenes.");
+        sb.AppendLine("This exporter does NOT load prefab contents.");
+        sb.AppendLine("This exporter reads .unity/.prefab/.asset/etc as raw serialized text.");
+        sb.AppendLine("Works best when Unity Project Settings > Editor > Asset Serialization Mode is Force Text.");
+        sb.AppendLine("Binary assets are skipped.");
         sb.AppendLine(ScriptsExporterForAIUtility.Separator);
         sb.AppendLine();
 
