@@ -1,9 +1,16 @@
 {
   "name": "com.sinsam.scripts-exporter-for-ai",
   "version": "1.0.0",
-  "displayName": "ScriptsExporterForAI",
+  "displayName": "Scripts Exporter For AI",
   "description": "Unity editor tools for exporting C# scripts and serialized Unity assets into combined text files for AI-assisted project analysis.",
   "unity": "2021.3",
+  "keywords": [
+    "ai",
+    "exporter",
+    "editor",
+    "scripts",
+    "serialized-assets"
+  ],
   "author": {
     "name": "Sinsam"
   }
