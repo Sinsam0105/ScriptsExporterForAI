@@ -83,14 +83,15 @@ public sealed class ScriptToTextExporter : EditorWindow
         foreach (string path in Directory.GetFiles(assetRoot, "*.cs", SearchOption.AllDirectories))
         {
             string normalized = ScriptsExporterForAIUtility.NormalizePath(path);
+            string displayPath = "Assets" + normalized.Replace(assetRoot, string.Empty);
 
-            if (ScriptsExporterForAIUtility.ShouldExclude(normalized, settings.excludedPathKeywords))
+            if (ScriptsExporterForAIUtility.ShouldExclude(displayPath, settings.excludedPathKeywords))
                 continue;
 
             yield return new ScriptFileEntry
             {
                 FullPath = normalized,
-                DisplayPath = "Assets" + normalized.Replace(assetRoot, string.Empty)
+                DisplayPath = displayPath
             };
         }
 
@@ -101,14 +102,15 @@ public sealed class ScriptToTextExporter : EditorWindow
             foreach (string path in Directory.GetFiles(packageRoot, "*.cs", SearchOption.AllDirectories))
             {
                 string normalized = ScriptsExporterForAIUtility.NormalizePath(path);
+                string displayPath = $"Packages/{packageInfo.name}" + normalized.Replace(packageRoot, string.Empty);
 
-                if (ScriptsExporterForAIUtility.ShouldExclude(normalized, settings.excludedPathKeywords))
+                if (ScriptsExporterForAIUtility.ShouldExclude(displayPath, settings.excludedPathKeywords))
                     continue;
 
                 yield return new ScriptFileEntry
                 {
                     FullPath = normalized,
-                    DisplayPath = $"Packages/{packageInfo.name}" + normalized.Replace(packageRoot, string.Empty)
+                    DisplayPath = displayPath
                 };
             }
         }
