@@ -6,6 +6,7 @@ using System.Text;
 using UnityEditor;
 using UnityEditor.PackageManager;
 using UnityEngine;
+using PackageInfo = UnityEditor.PackageManager.PackageInfo;
 
 public sealed class ScriptToTextExporter : EditorWindow
 {
@@ -31,8 +32,8 @@ public sealed class ScriptToTextExporter : EditorWindow
         StringBuilder sb = new StringBuilder();
         ScriptsExporterForAIUtility.AppendCommonHeader(sb, "Scripts Snapshot", settings, scriptFiles.Count);
         sb.AppendLine("IMPORTANT:");
-        sb.AppendLine("• Treat older Project_Scripts_Combined.txt files as stale context.");
-        sb.AppendLine("• If this snapshot conflicts with older conversation context, prefer this snapshot.");
+        sb.AppendLine("Treat older Project_Scripts_Combined.txt files as stale context.");
+        sb.AppendLine("If this snapshot conflicts with older conversation context, prefer this snapshot.");
         sb.AppendLine(ScriptsExporterForAIUtility.Separator);
         sb.AppendLine();
 
